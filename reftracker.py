@@ -1,5 +1,6 @@
 import sys
 import gc
+import weakref
 import types
 import re
 import numpy as np
@@ -272,7 +273,8 @@ class ObjTracker(object):
     This class is very useful for tracking memory leaks. The class goes to great (but not heroic) lengths to avoid tracking 
     its own internal objects.
     
-    Example:
+    Example::
+    
         ot = ObjTracker()   # takes snapshot of currently existing objects
            ... do stuff ...
         ot.diff()           # prints lists of objects created and deleted since ot was initialized
@@ -284,7 +286,7 @@ class ObjTracker(object):
         arrays = ot.findPersistent('ndarray')  ## returns all objects matching 'ndarray' (string match, not instance checking)
                                                ## that were considered persistent when the last diff() was run
                                                
-        describeObj(arrays[0])    ## See if we can determine who has references to this array
+        arrays.describe[0]    ## See if we can determine who has references to this array
     """
     
     
@@ -307,15 +309,24 @@ class ObjTracker(object):
             
         self.start()
 
-    def findNew(self, regex):
-        """Return all objects matching regex that were considered 'new' when the last diff() was run."""
-        return self.findTypes(self.newRefs, regex)
-    
-    def findPersistent(self, regex):
-        """Return all objects matching regex that were considered 'persistent' when the last diff() was run."""
-        return self.findTypes(self.persistentRefs, regex)
+    def findNew(self, regex, weak=True):
+        """Return all objects matching regex that were considered 'new' when 
+        the last diff() was run.
         
+        Return value is a GarbageWatcher (or a list if weak==False) sorted with 
+        the largest items first.
+        """
+        return self.findTypes(self.newRefs, regex, weak=weak)
     
+    def findPersistent(self, regex, weak=True):
+        """Return all objects matching regex that were considered 'persistent' 
+        when the last diff() was run.
+        
+        Return value is a GarbageWatcher (or a list if weak==False) sorted with 
+        the largest items first.
+        """
+        return self.findTypes(self.persistentRefs, regex, weak=weak)
+        
     def start(self):
         """
         Remember the current set of objects as the comparison for all future calls to diff()
@@ -330,8 +341,6 @@ class ObjTracker(object):
             self.rememberRef(r)
         self.startCount.clear()
         self.startCount.update(count)
-        #self.newRefs.clear()
-        #self.newRefs.update(refs)
 
     def diff(self, **kargs):
         """
@@ -400,7 +409,6 @@ class ObjTracker(object):
         print("-----------  %d Created since start (persistent): ------------" % len(persistentRefs))
         self.report(persistentRefs, objs, **kargs)
         
-        
     def __del__(self):
         self.startRefs.clear()
         self.startCount.clear()
@@ -456,7 +464,6 @@ class ObjTracker(object):
         if ref is not None:
             ObjTracker.allObjs[id(ref)] = None
             
-        
     def lookup(self, oid, ref, objs=None):
         if ref is None or ref() is None:
             try:
@@ -466,7 +473,6 @@ class ObjTracker(object):
         else:
             obj = ref()
         return obj
-                    
                     
     def report(self, refs, allobjs=None, showIDs=False):
         if allobjs is None:
@@ -495,12 +501,71 @@ class ObjTracker(object):
                 line += "\t"+",".join(map(str,rev[t]))
             print(line)
         
-    def findTypes(self, refs, regex):
+    def findTypes(self, refs, regex, weak=True):
         allObjs = get_all_objects()
         ids = {}
         objs = []
         r = re.compile(regex)
         for k in refs:
             if r.search(self.objTypes[k]):
-                objs.append(self.lookup(k, refs[k], allObjs))
-        return objs
+                o = self.lookup(k, refs[k], allObjs)
+                objs.append((objectSize(o), o))
+        objs.sort(key=lambda a: a[0], reverse=True)
+        if weak:
+            gw = GarbageWatcher()
+            for i,o in enumerate(objs):
+                gw[i] = o[1]
+            return gw
+        else:
+            return objs
+
+
+class GarbageWatcher(object):
+    """
+    Convenient dictionary for holding weak references to objects.
+    Mainly used to check whether the objects have been collect yet or not.
+    
+    Example::
+    
+        gw = GarbageWatcher()
+        gw['objName'] = obj
+        gw['objName2'] = obj2
+        
+        # Print status of all watched objects
+        gw.check()  
+        
+        # Describe references leading to this object
+        gw.describe('objName')
+        
+    """
+    def __init__(self):
+        self.objs = weakref.WeakValueDictionary()
+        self.allNames = []
+        
+    def add(self, obj, name):
+        self.objs[name] = obj
+        self.allNames.append(name)
+        
+    def __setitem__(self, name, obj):
+        self.add(obj, name)
+        
+    def check(self):
+        """Print a list of all watched objects and whether they have been collected."""
+        gc.collect()
+        dead = self.allNames[:]
+        alive = []
+        for k in self.objs:
+            dead.remove(k)
+            alive.append(k)
+        print("Deleted objects:", dead)
+        print("Live objects:", alive)
+        
+    def __getitem__(self, item):
+        return self.objs[item]
+
+    def describe(self, key, **kwds):
+        describeObj(self[key], **kwds)
+
+    def __len__(self):
+        return len(self.objs)
+        
