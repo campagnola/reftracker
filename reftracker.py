@@ -8,7 +8,9 @@ try:
     HAVE_NUMPY = True
 except ImportError:
     HAVE_NUMPY = False
-    
+
+__all__ = ['ObjTracker']
+
 
 def typeStr(obj):
     """Create a more useful type string by making <instance> types report their class."""
