@@ -13,7 +13,7 @@ setup(
     url='http://github.com/campagnola/reftracker',
     author='Luke Campagnola',
     author_email='luke.campagnola@gmail.com',
-    packages=['reftracker'],
+    py_modules=['reftracker'],
     classifiers=[
         "Programming Language :: Python",
         "Programming Language :: Python :: 2",
